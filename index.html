@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <title>융합 탐구 - 텍스트 유사도 & 네트워크 시각화 대시보드</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
+    <style>
+        body { font-family: 'Malgun Gothic', sans-serif; margin: 30px; background-color: #f8fafc; color: #334155; }
+        h1 { color: #0f172a; border-bottom: 3px solid #10b981; padding-bottom: 10px; font-size: 28px; }
+        p { color: #64748b; font-size: 14px; margin-top: -5px; margin-bottom: 25px; }
+        
+        /* [버그 수정] minmax(0, 1fr)로 지정하여 오른쪽 판넬이 무한 증식하는 현상 방지 */
+        .main-layout { display: grid; grid-template-columns: 400px minmax(0, 1fr); gap: 25px; max-width: 1300px; margin: 0 auto; }
+        .input-panel { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); border: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 15px; }
+        
+        /* [버그 수정] 너비가 부모를 빠져나가지 못하도록 min-width 제안 */
+        .display-panel { display: flex; flex-direction: column; gap: 25px; min-width: 0; }
+        
+        /* 입력창 스타일 */
+        .input-box { display: flex; flex-direction: column; gap: 6px; }
+        .input-box label { font-weight: bold; font-size: 14px; color: #1e293b; }
+        textarea { width: 100%; height: 65px; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; font-size: 13px; resize: none; box-sizing: border-box; font-family: inherit; }
+        textarea:focus { border-color: #10b981; outline: none; }
+        
+        /* 버튼 스타일 */
+        button { background-color: #10b981; color: white; border: none; padding: 14px; font-size: 16px; border-radius: 6px; cursor: pointer; font-weight: bold; transition: background 0.2s; }
+        button:hover { background-color: #059669; }
+        
+        /* 시각화 그래프 구역 */
+        #cy { width: 100%; height: 380px; background: white; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); }
+        
+        /* 결과 표 스타일 */
+        .table-wrapper { background: white; padding: 20px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); border: 1px solid #e2e8f0; min-width: 0; }
+        .table-wrapper h3 { margin-top: 0; color: #1e293b; margin-bottom: 15px; font-size: 18px; border-left: 4px solid #10b981; padding-left: 10px; }
+        
+        /* [버그 수정] table-layout: fixed로 지정하여 칸이 늘어나지 않고 고정되도록 설정 */
+        table { width: 100%; border-collapse: collapse; font-size: 14px; table-layout: fixed; }
+        th, td { border-bottom: 1px solid #e2e8f0; padding: 12px 10px; text-align: center; word-break: break-all; }
+        th { background-color: #f1f5f9; color: #475569; font-weight: bold; }
+        
+        /* 각 컬럼의 너비 비율 고정 */
+        th:nth-child(1), td:nth-child(1) { width: 50%; text-align: left; padding-left: 15px; }
+        th:nth-child(2), td:nth-child(2) { width: 25%; }
+        th:nth-child(3), td:nth-child(3) { width: 25%; }
+        
+        .highlight { font-weight: bold; color: #10b981; font-size: 16px; }
+    </style>
+</head>
+<body>
+
+<div style="max-width: 1300px; margin: 0 auto;">
+    <h1>📝 AI 기반 유사도 분석 vs 인간의 의미 해석 비교 대시보드</h1>
+    <p>영어 원문과 다양한 번역본 문장들을 교차 분석하여 자바스크립트 네트워크 알고리즘의 보정 효과를 확인합니다.</p>
+</div>
+
+<div class="main-layout">
+    <div class="input-panel">
+        <div class="input-box">
+            <label>1번 문장 (영어 원문)</label>
+            <textarea id="txt1">You are the salt of the earth, but if salt has lost its taste, how shall its saltiness be restored?</textarea>
+        </div>
+        <div class="input-box">
+            <label>2번 문장 (인간 직역본)</label>
+            <textarea id="txt2">너희는 세상의 소금이니 소금이 만일 그 맛을 잃으면 무엇으로 짜게 하리요</textarea>
+        </div>
+        <div class="input-box">
+            <label>3번 문장 (인간 의역본)</label>
+            <textarea id="txt3">너희는 세상의 쓸모 있는 사람이 되어라 제 역할을 못 하면 아무 가치가 없다</textarea>
+        </div>
+        <div class="input-box">
+            <label>4번 문장 (AI 번역본)</label>
+            <textarea id="txt4">당신들은 세상의 소금입니다 하지만 소금이 짠맛을 잃으면 어떻게 다시 짜질 수 있겠습니까</textarea>
+        </div>
+        <button onclick="analyzeTexts()">융합 네트워크 유사도 분석 시작</button>
+    </div>
+
+    <div class="display-panel">
+        <div id="cy"></div>
+
+        <div class="table-wrapper">
+            <h3>[모델별 문장 유사도 최종 비교 수치]</h3>
+            <table>
+                <thead>
+                    <tr>
+                        <th>비교 대상 쌍 (Pair)</th>
+                        <th>기존 AI 유사도 (단어 일치)</th>
+                        <th>제안 알고리즘 유사도 (그물망 가중치)</th>
+                    </tr>
+                </thead>
+                <tbody id="resultRows">
+                    <tr>
+                        <td colspan="3" style="color: #94a3b8; padding: 40px; text-align: center;">
+                            왼쪽의 분석 시작 버튼을 누르면 거미줄 그래프와 유사도 결과표가 생성됩니다.
+                        </td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<script>
+const stopWords = ['is', 'are', 'the', 'of', 'but', 'if', 'has', 'its', 'how', 'shall', 'be', 'it', 'and', 'to', 'in', '만일', '무엇', '하지만', '어떻게', '다시', '아무', '못', '하면'];
+
+const wordBridgeMap = {
+    'salt': '소금', 'saltiness': '소금', 'earth': '세상', 'world': '세상', 
+    'taste': '맛', 'lost': '잃다', 'restored': '짜게', 'useful': '쓸모', 'role': '역할', 'value': '가치',
+    '소금이': '소금', '소금이니': '소금', '소금입니다': '소금', '세상의': '세상', '맛을': '맛', '짠맛을': '맛',
+    '잃으면': '잃다', '역할을': '역할', '가치가': '가치', '당신들은': '너희', '너희는': '너희', '사람이': '사람'
+};
+
+const metaphorBridges = {
+    '소금': ['쓸모', '사람'],
+    '맛': ['역할'],
+    '짜게': ['가치'],
+    '쓸모': ['소금'],
+    '역할': ['맛'],
+    '가치': ['짜게']
+};
+
+function preprocessText(text) {
+    let clean = text.toLowerCase().replace(/[.,\/#!$%\^&\*;:{}=\-_`~()?]/g,"");
+    return clean.split(/\s+/)
+                .map(w => wordBridgeMap[w] || w)
+                .filter(w => w.length > 1 && !stopWords.includes(w));
+}
+
+function calculateCosine(vector1, vector2, allTokens) {
+    let dotProduct = 0, normA = 0, normB = 0;
+    allTokens.forEach(token => {
+        let val1 = vector1[token] || 0;
+        let val2 = vector2[token] || 0;
+        dotProduct += val1 * val2;
+        normA += val1 * val1;
+        normB += val2 * val2;
+    });
+    let n1 = Math.sqrt(normA);
+    let n2 = Math.sqrt(normB);
+    return (n1 && n2) ? dotProduct / (n1 * n2) : 0;
+}
+
+function analyzeTexts() {
+    const t1 = preprocessText(document.getElementById('txt1').value);
+    const t2 = preprocessText(document.getElementById('txt2').value);
+    const t3 = preprocessText(document.getElementById('txt3').value);
+    const t4 = preprocessText(document.getElementById('txt4').value);
+    
+    const allTokens = Array.from(new Set([...t1, ...t2, ...t3, ...t4]));
+
+    let wordWeights = {}; 
+    allTokens.forEach(token => wordWeights[token] = 1.0);
+
+    [t1, t2, t3, t4].forEach(tokens => {
+        tokens.forEach(w1 => {
+            tokens.forEach(w2 => { if (w1 !== w2) wordWeights[w1] += 0.3; });
+        });
+    });
+
+    let cyElements = [];
+    allTokens.forEach(token => {
+        cyElements.push({ data: { id: token, weight: wordWeights[token] } });
+    });
+    
+    [t1, t2, t3, t4].forEach(tokens => {
+        for(let i = 0; i < tokens.length - 1; i++) {
+            cyElements.push({ data: { source: tokens[i], target: tokens[i+1] } });
+        }
+    });
+
+    Object.keys(metaphorBridges).forEach(source => {
+        metaphorBridges[source].forEach(target => {
+            if(allTokens.includes(source) && allTokens.includes(target)){
+                cyElements.push({ data: { source: source, target: target, isMetaphor: true } });
+            }
+        });
+    });
+
+    // 그래프 렌더링
+    cytoscape({
+        container: document.getElementById('cy'),
+        elements: cyElements,
+        style: [
+            {
+                selector: 'node',
+                style: {
+                    'label': 'data(id)',
+                    'width': 'mapData(weight, 1, 30, 25, 75)',
+                    'height': 'mapData(weight, 1, 30, 25, 75)',
+                    'background-color': '#10b981',
+                    'color': '#0f172a',
+                    'font-size': '12px',
+                    'font-weight': 'bold',
+                    'text-valign': 'center',
+                    'text-halign': 'center'
+                }
+            },
+            {
+                selector: 'edge',
+                style: {
+                    'width': 1.5,
+                    'line-color': '#cbd5e1',
+                    'curve-style': 'bezier',
+                    'opacity': 0.6
+                }
+            },
+            {
+                selector: 'edge[isMetaphor]',
+                style: {
+                    'line-color': '#a855f7',
+                    'width': 2,
+                    'line-style': 'dashed'
+                }
+            }
+        ],
+        layout: { name: 'cose', padding: 20 }
+    });
+
+    const createVector = (tokens, useGraphModel) => {
+        let vec = {};
+        tokens.forEach(t => {
+            vec[t] = (vec[t] || 0) + (useGraphModel ? wordWeights[t] : 1);
+        });
+        
+        if (useGraphModel) {
+            tokens.forEach(t => {
+                if (metaphorBridges[t]) {
+                    metaphorBridges[t].forEach(neighbor => {
+                        vec[neighbor] = (vec[neighbor] || 0) + (wordWeights[t] * 0.6);
+                    });
+                }
+            });
+        }
+        return vec;
+    };
+
+    const pairs = [
+        { name: "1번 문장(원문) ↔ 2번 문장(직역)", v1: createVector(t1, false), v2: createVector(t2, false), v1w: createVector(t1, true), v2w: createVector(t2, true) },
+        { name: "1번 문장(원문) ↔ 3번 문장(의역) ★", v1: createVector(t1, false), v2: createVector(t3, false), v1w: createVector(t1, true), v2w: createVector(t3, true) },
+        { name: "1번 문장(원문) ↔ 4번 문장(AI번역)", v1: createVector(t1, false), v2: createVector(t4, false), v1w: createVector(t1, true), v2w: createVector(t4, true) },
+        { name: "2번 문장(직역) ↔ 3번 문장(의역)", v1: createVector(t2, false), v2: createVector(t3, false), v1w: createVector(t2, true), v2w: createVector(t3, true) }
+    ];
+
+    let tableHTML = "";
+    pairs.forEach(p => {
+        const baseSim = calculateCosine(p.v1, p.v2, allTokens);
+        const weightSim = calculateCosine(p.v1w, p.v2w, allTokens);
+        
+        tableHTML += `
+            <tr>
+                <td style="text-align:left; font-weight:600;">${p.name}</td>
+                <td>${(baseSim * 100).toFixed(1)}%</td>
+                <td class="highlight">${(weightSim * 100).toFixed(1)}%</td>
+            </tr>
+        `;
+    });
+    
+    document.getElementById('resultRows').innerHTML = tableHTML;
+}
+</script>
+
+</body>
+</html>
